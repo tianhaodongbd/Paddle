@@ -358,7 +358,7 @@ def amp_guard(
             'amp_guard can only be enabled on CUDAPlace, XPUPlace, and CustomPlace, current place is %s, so it makes no effect.'
             % tracer._expected_place
         )
-        enable = False
+        enable = True
     if enable:
         # For xpu:
         if tracer._expected_place.is_xpu_place() and (dtype == 'bfloat16'):
