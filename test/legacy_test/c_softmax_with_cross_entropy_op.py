@@ -74,7 +74,7 @@ class TestCSoftmaxWithCrossEntropy(unittest.TestCase):
         strategy = fleet.DistributedStrategy()
         strategy.tensor_parallel = True
         strategy.tensor_parallel_configs = {'tensor_parallel_degree': 2}
-    
+
     def test_model(self, data_type="float32"):
         rank = fleet.worker_index()
 
@@ -139,15 +139,17 @@ class TestCSoftmaxWithCrossEntropy(unittest.TestCase):
 
         # get data that is shared by both ranks
         np.random.seed(os.getuid())
-        
+
         C = 4
 
         label = []
         for _ in range(self.batch_size):
-            tmp = np.random.choice(range(0, self.num_class), size=C, replace=False)
+            tmp = np.random.choice(
+                range(0, self.num_class), size=C, replace=False
+            )
             label.append(tmp)
         label = np.array(label)
-        print("label", label)
+
         ignore_index = -100
 
         local_elements = int(self.num_class / 2)
@@ -192,7 +194,7 @@ class TestCSoftmaxWithCrossEntropy(unittest.TestCase):
         for i in range(len(label)):
             for c in label[i]:
                 need_label[i][c] = prob
-        
+
         need_loss = cross_entropy(
             need_softmax, need_label, True, 1, ignore_index=ignore_index
         )

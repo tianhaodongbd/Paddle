@@ -56,17 +56,17 @@ __global__ void MaskLabelByIndex(T* predicted_logits,
                                  const int64_t C,
                                  const int nranks) {
   CUDA_KERNEL_LOOP_TYPE(i, N, int64_t) {
-    for(int j = 0; j < C; ++j) {
+    for (int j = 0; j < C; ++j) {
       auto real_label = label[i * C + j];
       PADDLE_ENFORCE(((real_label < D * nranks) && (real_label >= 0)) ||
-                        (real_label == ignore_index),
-                    "The index is out of bounds, "
-                    "please check whether the value of label and "
-                    "input meet the class number. It should "
-                    "be less than [%ld] or equal to [%ld], but received [%ld]",
-                    static_cast<int64_t>(D * nranks),
-                    static_cast<int64_t>(ignore_index),
-                    static_cast<int64_t>(real_label));
+                         (real_label == ignore_index),
+                     "The index is out of bounds, "
+                     "please check whether the value of label and "
+                     "input meet the class number. It should "
+                     "be less than [%ld] or equal to [%ld], but received [%ld]",
+                     static_cast<int64_t>(D * nranks),
+                     static_cast<int64_t>(ignore_index),
+                     static_cast<int64_t>(real_label));
 
       if (real_label >= start_index && real_label < end_index) {
         predicted_logits[i * C + j] = logit[i * D + real_label - start_index];
@@ -87,14 +87,15 @@ __global__ void CaculateLoss(T* loss,
 
   CUDA_KERNEL_LOOP_TYPE(i, N, int64_t) {
     T tmp_loss = static_cast<T>(0);
-    for(int j = 0; j < C; ++j) {
+    for (int j = 0; j < C; ++j) {
       auto real_label = static_cast<int64_t>(label[i * C + j]);
       tmp_loss += ignore_index == real_label
-                    ? static_cast<T>(0)
-                    : phi::funcs::TolerableValue<T>()(
-                          (phi::funcs::TolerableValue<T>()(
-                              phi::funcs::real_log(sum_exp_logits[i])) -
-                          predict_logits[i * C + j]) * prob);
+                      ? static_cast<T>(0)
+                      : phi::funcs::TolerableValue<T>()(
+                            (phi::funcs::TolerableValue<T>()(
+                                 phi::funcs::real_log(sum_exp_logits[i])) -
+                             predict_logits[i * C + j]) *
+                            prob);
     }
     loss[i] = tmp_loss;
   }
@@ -199,6 +200,7 @@ struct CSoftmaxWithCrossEntropyFunctor<phi::GPUContext, T> {
     const int axis = logits_dims.size() - 1;
     const int64_t N = phi::funcs::SizeToAxis<int64_t>(axis, logits_dims);
     const int64_t D = phi::funcs::SizeFromAxis<int64_t>(axis, logits_dims);
+    const int64_t C = phi::funcs::SizeFromAxis<int64_t>(axis, labels_dims);
 
     phi::DenseTensor logits_2d, softmax_2d, loss_2d;
     logits_2d.ShareDataWith(*logits).Resize({N, D});
@@ -243,7 +245,7 @@ struct CSoftmaxWithCrossEntropyFunctor<phi::GPUContext, T> {
     // step 3, obtain predict target
     phi::DenseTensor predicted_logits;
     predicted_logits =
-        ctx.AllocateTmpTensor<T, phi::GPUContext>({N, 1}, dev_ctx);
+        ctx.AllocateTmpTensor<T, phi::GPUContext>({N, C}, dev_ctx);
     predicted_logits.mutable_data<T>(place);
 
     auto t = phi::EigenVector<T>::Flatten(predicted_logits);
@@ -266,7 +268,7 @@ struct CSoftmaxWithCrossEntropyFunctor<phi::GPUContext, T> {
           end_index,
           N,
           D,
-          1,
+          C,
           nranks);
     } else if (label_type == framework::proto::VarType::INT64) {
       MaskLabelByIndex<T, int64_t>
@@ -278,7 +280,7 @@ struct CSoftmaxWithCrossEntropyFunctor<phi::GPUContext, T> {
                                                      end_index,
                                                      N,
                                                      D,
-                                                     1,
+                                                     C,
                                                      nranks);
     }
 
@@ -330,7 +332,7 @@ struct CSoftmaxWithCrossEntropyFunctor<phi::GPUContext, T> {
                                                      labels->data<int32_t>(),
                                                      ignore_index,
                                                      N,
-                                                     1);
+                                                     C);
     } else {
       CaculateLoss<T, int64_t>
           <<<blocks, threads, 0, dev_ctx.stream()>>>(loss_2d.data<T>(),
@@ -339,7 +341,7 @@ struct CSoftmaxWithCrossEntropyFunctor<phi::GPUContext, T> {
                                                      labels->data<int64_t>(),
                                                      ignore_index,
                                                      N,
-                                                     1);
+                                                     C);
     }
 
     auto eigen_sum_exp_logits =
@@ -382,8 +384,6 @@ struct CSoftmaxWithCrossEntropyProcessGroupFunctor<phi::GPUContext, T> {
     const int64_t N = phi::funcs::SizeToAxis<int64_t>(axis, logits_dims);
     const int64_t D = phi::funcs::SizeFromAxis<int64_t>(axis, logits_dims);
     const int64_t C = phi::funcs::SizeFromAxis<int64_t>(axis, labels_dims);
-
-    // const T prob = static_cast<T>(1.0 / C);
 
     phi::DenseTensor logits_2d, softmax_2d, loss_2d;
     logits_2d.ShareDataWith(*logits).Resize({N, D});
