@@ -87,6 +87,7 @@ __global__ void CaculateLoss(T* loss,
 
   CUDA_KERNEL_LOOP_TYPE(i, N, int64_t) {
     T tmp_loss = static_cast<T>(0);
+    int ignore_num = 0;
     for (int j = 0; j < C; ++j) {
       auto real_label = static_cast<int64_t>(label[i * C + j]);
       tmp_loss += ignore_index == real_label
@@ -96,28 +97,54 @@ __global__ void CaculateLoss(T* loss,
                                  phi::funcs::real_log(sum_exp_logits[i])) -
                              predict_logits[i * C + j]) *
                             prob);
+      ignore_num += ignore_index == real_label ? 1 : 0;
     }
-    loss[i] = tmp_loss;
+    loss[i] = ignore_num > 0 ? static_cast<T>(0) : tmp_loss;
+  }
+}
+
+template <typename T, typename IndexT>
+__global__ void CaculateLogitsGrad(T* logits_grad,
+                                   IndexT* is_ignore,
+                                   const IndexT* labels,
+                                   const IndexT ignore_index,
+                                   const int64_t start_index,
+                                   const int64_t end_index,
+                                   const int64_t N,
+                                   const int64_t D,
+                                   const int64_t C) {
+  const T prob = static_cast<T>(1.0 / C);
+  CUDA_KERNEL_LOOP_TYPE(i, N, int64_t) {
+    is_ignore[i] = labels[i * C];
+    for (int j = 0; j < C; ++j) {
+      auto real_label = labels[i * C + j];
+      if (real_label == ignore_index) {
+        is_ignore[i] = real_label;
+      }
+      if (real_label >= start_index && real_label < end_index) {
+        int64_t idx = i * D + real_label - start_index;
+        logits_grad[idx] = logits_grad[idx] - prob;
+      }
+    }
   }
 }
 
 template <typename T, typename IndexT>
 __global__ void MaskLabelByIndexGrad(T* logits_grad,
                                      const T* loss_grad,
-                                     const IndexT* labels,
+                                     const IndexT* is_ignore,
                                      const int64_t start_index,
                                      const int64_t end_index,
                                      const int64_t N,
                                      const int64_t D,
+                                     const int64_t C,
                                      const int64_t ignore_index) {
   CUDA_KERNEL_LOOP_TYPE(i, N * D, int64_t) {
     auto row = i / D;
     auto col = i % D;
-    auto lbl = static_cast<int64_t>(labels[row]);
+    auto lbl = static_cast<int64_t>(is_ignore[row]);
     if (lbl == ignore_index) {
       logits_grad[i] = static_cast<T>(0.0);
-    } else if ((col + start_index) == labels[row]) {
-      logits_grad[i] = (logits_grad[i] - static_cast<T>(1.0)) * loss_grad[row];
     } else {
       logits_grad[i] *= loss_grad[row];
     }
@@ -524,34 +551,79 @@ class CSoftmaxWithCrossEntropyGradCUDAKernel : public framework::OpKernel<T> {
     const int64_t N = phi::funcs::SizeToAxis<int64_t>(axis, sofrmax_dims);
     const int64_t D = phi::funcs::SizeFromAxis<int64_t>(axis, sofrmax_dims);
 
+    const auto label_dims = labels->dims();
+    const int64_t C = label_dims[axis];
+
     phi::DenseTensor logit_grad_2d;
     logit_grad_2d.ShareDataWith(*logit_grad).Resize({N, D});
 
     int64_t blocks = NumBlocks(N * D);
+    int64_t blocks_cal = NumBlocks(N);
     int threads = kNumCUDAThreads;
     const auto& label_type = framework::TransToProtoVarType(labels->dtype());
     const int64_t start_index = rank * D;
     const int64_t end_index = start_index + D;
+    phi::DenseTensor is_ignore;
 
     if (label_type == framework::proto::VarType::INT32) {
+      if (C > 1) {
+        is_ignore = context.AllocateTmpTensor<int32_t, phi::GPUContext>(
+            {N, 1}, dev_ctx);
+      } else {
+        is_ignore.ShareDataWith(*labels).Resize({N, 1});
+      }
+
+      CaculateLogitsGrad<T, int32_t>
+          <<<blocks_cal, threads, 0, dev_ctx.stream()>>>(
+              logit_grad_2d.data<T>(),
+              is_ignore.data<int32_t>(),
+              labels->data<int32_t>(),
+              ignore_index,
+              start_index,
+              end_index,
+              N,
+              D,
+              C);
+
       MaskLabelByIndexGrad<T, int32_t>
           <<<blocks, threads, 0, dev_ctx.stream()>>>(logit_grad_2d.data<T>(),
                                                      loss_grad->data<T>(),
-                                                     labels->data<int32_t>(),
+                                                     is_ignore.data<int32_t>(),
                                                      start_index,
                                                      end_index,
                                                      N,
                                                      D,
+                                                     C,
                                                      ignore_index);
     } else if (label_type == framework::proto::VarType::INT64) {
+      if (C > 1) {
+        is_ignore = context.AllocateTmpTensor<int64_t, phi::GPUContext>(
+            {N, 1}, dev_ctx);
+      } else {
+        is_ignore.ShareDataWith(*labels).Resize({N, 1});
+      }
+
+      CaculateLogitsGrad<T, int64_t>
+          <<<blocks_cal, threads, 0, dev_ctx.stream()>>>(
+              logit_grad_2d.data<T>(),
+              is_ignore.data<int64_t>(),
+              labels->data<int64_t>(),
+              ignore_index,
+              start_index,
+              end_index,
+              N,
+              D,
+              C);
+
       MaskLabelByIndexGrad<T, int64_t>
           <<<blocks, threads, 0, dev_ctx.stream()>>>(logit_grad_2d.data<T>(),
                                                      loss_grad->data<T>(),
-                                                     labels->data<int64_t>(),
+                                                     is_ignore.data<int64_t>(),
                                                      start_index,
                                                      end_index,
                                                      N,
                                                      D,
+                                                     C,
                                                      ignore_index);
     }
   }
