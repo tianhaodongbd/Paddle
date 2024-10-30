@@ -130,21 +130,43 @@ __global__ void CaculateLogitsGrad(T* logits_grad,
 }
 
 template <typename T, typename IndexT>
-__global__ void MaskLabelByIndexGrad(T* logits_grad,
-                                     const T* loss_grad,
-                                     const IndexT* is_ignore,
-                                     const int64_t start_index,
-                                     const int64_t end_index,
-                                     const int64_t N,
-                                     const int64_t D,
-                                     const int64_t C,
-                                     const int64_t ignore_index) {
+__global__ void SoftMaskLabelByIndexGrad(T* logits_grad,
+                                         const T* loss_grad,
+                                         const IndexT* is_ignore,
+                                         const int64_t start_index,
+                                         const int64_t end_index,
+                                         const int64_t N,
+                                         const int64_t D,
+                                         const int64_t ignore_index) {
   CUDA_KERNEL_LOOP_TYPE(i, N * D, int64_t) {
     auto row = i / D;
     auto col = i % D;
     auto lbl = static_cast<int64_t>(is_ignore[row]);
     if (lbl == ignore_index) {
       logits_grad[i] = static_cast<T>(0.0);
+    } else {
+      logits_grad[i] *= loss_grad[row];
+    }
+  }
+}
+
+template <typename T, typename IndexT>
+__global__ void MaskLabelByIndexGrad(T* logits_grad,
+                                     const T* loss_grad,
+                                     const IndexT* labels,
+                                     const int64_t start_index,
+                                     const int64_t end_index,
+                                     const int64_t N,
+                                     const int64_t D,
+                                     const int64_t ignore_index) {
+  CUDA_KERNEL_LOOP_TYPE(i, N * D, int64_t) {
+    auto row = i / D;
+    auto col = i % D;
+    auto lbl = static_cast<int64_t>(labels[row]);
+    if (lbl == ignore_index) {
+      logits_grad[i] = static_cast<T>(0.0);
+    } else if ((col + start_index) == labels[row]) {
+      logits_grad[i] = (logits_grad[i] - static_cast<T>(1.0)) * loss_grad[row];
     } else {
       logits_grad[i] *= loss_grad[row];
     }
@@ -569,62 +591,78 @@ class CSoftmaxWithCrossEntropyGradCUDAKernel : public framework::OpKernel<T> {
       if (C > 1) {
         is_ignore = context.AllocateTmpTensor<int32_t, phi::GPUContext>(
             {N, 1}, dev_ctx);
+
+        CaculateLogitsGrad<T, int32_t>
+            <<<blocks_cal, threads, 0, dev_ctx.stream()>>>(
+                logit_grad_2d.data<T>(),
+                is_ignore.data<int32_t>(),
+                labels->data<int32_t>(),
+                ignore_index,
+                start_index,
+                end_index,
+                N,
+                D,
+                C);
+
+        SoftMaskLabelByIndexGrad<T, int32_t>
+            <<<blocks, threads, 0, dev_ctx.stream()>>>(
+                logit_grad_2d.data<T>(),
+                loss_grad->data<T>(),
+                is_ignore.data<int32_t>(),
+                start_index,
+                end_index,
+                N,
+                D,
+                ignore_index);
       } else {
-        is_ignore.ShareDataWith(*labels).Resize({N, 1});
+        MaskLabelByIndexGrad<T, int32_t>
+            <<<blocks, threads, 0, dev_ctx.stream()>>>(logit_grad_2d.data<T>(),
+                                                       loss_grad->data<T>(),
+                                                       labels->data<int32_t>(),
+                                                       start_index,
+                                                       end_index,
+                                                       N,
+                                                       D,
+                                                       ignore_index);
       }
-
-      CaculateLogitsGrad<T, int32_t>
-          <<<blocks_cal, threads, 0, dev_ctx.stream()>>>(
-              logit_grad_2d.data<T>(),
-              is_ignore.data<int32_t>(),
-              labels->data<int32_t>(),
-              ignore_index,
-              start_index,
-              end_index,
-              N,
-              D,
-              C);
-
-      MaskLabelByIndexGrad<T, int32_t>
-          <<<blocks, threads, 0, dev_ctx.stream()>>>(logit_grad_2d.data<T>(),
-                                                     loss_grad->data<T>(),
-                                                     is_ignore.data<int32_t>(),
-                                                     start_index,
-                                                     end_index,
-                                                     N,
-                                                     D,
-                                                     C,
-                                                     ignore_index);
     } else if (label_type == framework::proto::VarType::INT64) {
       if (C > 1) {
         is_ignore = context.AllocateTmpTensor<int64_t, phi::GPUContext>(
             {N, 1}, dev_ctx);
+
+        CaculateLogitsGrad<T, int64_t>
+            <<<blocks_cal, threads, 0, dev_ctx.stream()>>>(
+                logit_grad_2d.data<T>(),
+                is_ignore.data<int64_t>(),
+                labels->data<int64_t>(),
+                ignore_index,
+                start_index,
+                end_index,
+                N,
+                D,
+                C);
+
+        SoftMaskLabelByIndexGrad<T, int64_t>
+            <<<blocks, threads, 0, dev_ctx.stream()>>>(
+                logit_grad_2d.data<T>(),
+                loss_grad->data<T>(),
+                is_ignore.data<int64_t>(),
+                start_index,
+                end_index,
+                N,
+                D,
+                ignore_index);
       } else {
-        is_ignore.ShareDataWith(*labels).Resize({N, 1});
+        MaskLabelByIndexGrad<T, int64_t>
+            <<<blocks, threads, 0, dev_ctx.stream()>>>(logit_grad_2d.data<T>(),
+                                                       loss_grad->data<T>(),
+                                                       labels->data<int64_t>(),
+                                                       start_index,
+                                                       end_index,
+                                                       N,
+                                                       D,
+                                                       ignore_index);
       }
-
-      CaculateLogitsGrad<T, int64_t>
-          <<<blocks_cal, threads, 0, dev_ctx.stream()>>>(
-              logit_grad_2d.data<T>(),
-              is_ignore.data<int64_t>(),
-              labels->data<int64_t>(),
-              ignore_index,
-              start_index,
-              end_index,
-              N,
-              D,
-              C);
-
-      MaskLabelByIndexGrad<T, int64_t>
-          <<<blocks, threads, 0, dev_ctx.stream()>>>(logit_grad_2d.data<T>(),
-                                                     loss_grad->data<T>(),
-                                                     is_ignore.data<int64_t>(),
-                                                     start_index,
-                                                     end_index,
-                                                     N,
-                                                     D,
-                                                     C,
-                                                     ignore_index);
     }
   }
 };
