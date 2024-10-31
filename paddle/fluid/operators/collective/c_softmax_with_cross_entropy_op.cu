@@ -104,15 +104,15 @@ __global__ void CaculateLoss(T* loss,
 }
 
 template <typename T, typename IndexT>
-__global__ void CaculateLogitsGrad(T* logits_grad,
-                                   IndexT* is_ignore,
-                                   const IndexT* labels,
-                                   const IndexT ignore_index,
-                                   const int64_t start_index,
-                                   const int64_t end_index,
-                                   const int64_t N,
-                                   const int64_t D,
-                                   const int64_t C) {
+__global__ void CaculateSoftLogitsGrad(T* logits_grad,
+                                       IndexT* is_ignore,
+                                       const IndexT* labels,
+                                       const IndexT ignore_index,
+                                       const int64_t start_index,
+                                       const int64_t end_index,
+                                       const int64_t N,
+                                       const int64_t D,
+                                       const int64_t C) {
   const T prob = static_cast<T>(1.0 / C);
   CUDA_KERNEL_LOOP_TYPE(i, N, int64_t) {
     is_ignore[i] = labels[i * C];
@@ -585,14 +585,14 @@ class CSoftmaxWithCrossEntropyGradCUDAKernel : public framework::OpKernel<T> {
     const auto& label_type = framework::TransToProtoVarType(labels->dtype());
     const int64_t start_index = rank * D;
     const int64_t end_index = start_index + D;
-    phi::DenseTensor is_ignore;
 
     if (label_type == framework::proto::VarType::INT32) {
       if (C > 1) {
+        phi::DenseTensor is_ignore;
         is_ignore = context.AllocateTmpTensor<int32_t, phi::GPUContext>(
             {N, 1}, dev_ctx);
 
-        CaculateLogitsGrad<T, int32_t>
+        CaculateSoftLogitsGrad<T, int32_t>
             <<<blocks_cal, threads, 0, dev_ctx.stream()>>>(
                 logit_grad_2d.data<T>(),
                 is_ignore.data<int32_t>(),
@@ -627,10 +627,11 @@ class CSoftmaxWithCrossEntropyGradCUDAKernel : public framework::OpKernel<T> {
       }
     } else if (label_type == framework::proto::VarType::INT64) {
       if (C > 1) {
+        phi::DenseTensor is_ignore;
         is_ignore = context.AllocateTmpTensor<int64_t, phi::GPUContext>(
             {N, 1}, dev_ctx);
 
-        CaculateLogitsGrad<T, int64_t>
+        CaculateSoftLogitsGrad<T, int64_t>
             <<<blocks_cal, threads, 0, dev_ctx.stream()>>>(
                 logit_grad_2d.data<T>(),
                 is_ignore.data<int64_t>(),
