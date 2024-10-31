@@ -440,6 +440,7 @@ def _c_softmax_with_cross_entropy(
         )
     if input_dims - 1 == label_dims:
         label = paddle.unsqueeze(label, axis=-1)
+        label_shape = list(label.shape)
     if label_shape[-1] < 1 or label_shape[-1] > input_shape[-1] * nranks:
         raise ValueError(
             f'Expected label_shape[-1] >= 1 and label_shape[-1] <= input_shape[-1] * nranks\
