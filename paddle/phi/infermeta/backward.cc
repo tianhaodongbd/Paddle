@@ -311,6 +311,20 @@ void CSoftmaxWithCrossEntropyGradInferMeta(const MetaTensor& softmax,
                                            MetaConfig config) {
   logits_grad->set_dims(softmax.dims());
 }
+
+void CSoftmaxWithMultiLabelCrossEntropyGradInferMeta(
+    const MetaTensor& softmax,
+    const MetaTensor& label,
+    const MetaTensor& loss_grad,
+    int64_t ignore_index,
+    int ring_id,
+    int rank,
+    int nranks,
+    MetaTensor* logits_grad,
+    MetaConfig config) {
+  logits_grad->set_dims(softmax.dims());
+}
+
 void FlashAttnGradInferMeta(const MetaTensor& q,
                             const MetaTensor& k,
                             const MetaTensor& v,

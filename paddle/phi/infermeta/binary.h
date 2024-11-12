@@ -209,6 +209,17 @@ void CSoftmaxWithCrossEntropyInferMeta(const MetaTensor& logits,
                                        MetaTensor* loss,
                                        MetaConfig config = MetaConfig());
 
+void CSoftmaxWithMultiLabelCrossEntropyInferMeta(
+    const MetaTensor& logits,
+    const MetaTensor& label,
+    int64_t ignore_index,
+    int ring_id,
+    int rank,
+    int nranks,
+    MetaTensor* softmax,
+    MetaTensor* loss,
+    MetaConfig config = MetaConfig());
+
 void CtcAlignInferMeta(const MetaTensor& input,
                        const MetaTensor& input_length,
                        int blank,

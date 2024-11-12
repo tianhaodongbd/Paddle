@@ -1007,6 +1007,17 @@
     data_type : logits
   backward: c_softmax_with_cross_entropy_grad
 
+- op: c_softmax_with_multi_label_cross_entropy
+  args: (Tensor logits, Tensor label,  int64_t ignore_index=-100, int ring_id=0, int rank=0, int nranks=0)
+  output: Tensor(softmax), Tensor(loss)
+  infer_meta:
+    func : CSoftmaxWithMultiLabelCrossEntropyInferMeta
+    spmd_rule : CSoftmaxWithMultiLabelCrossEntropyInferSpmd
+  kernel:
+    func: c_softmax_with_multi_label_cross_entropy
+    data_type : logits
+  backward: c_softmax_with_multi_label_cross_entropy_grad
+
 - op: faster_tokenizer
   args: (Tensor vocab, Tensor text, Tensor text_pair, bool do_lower_case = false,
     bool is_split_into_words = false, int max_seq_len = 0, bool pad_to_max_seq_len
