@@ -42,6 +42,7 @@ void GetMultiLabelCrossEntropyNotations(int x_ndim,
 SpmdInfo CSoftmaxWithMultiLabelCrossEntropyInferSpmd(
     const DistMetaTensor& x,
     const DistMetaTensor& label,
+    const DistMetaTensor& smooth_weight,
     int ignore_index,
     int ring_id,
     int rank,
@@ -50,6 +51,7 @@ SpmdInfo CSoftmaxWithMultiLabelCrossEntropyInferSpmd(
   // logic
   EXTRACT_SHAPE_AND_DIST_ATTR_WITH_DIM_CK(x);
   EXTRACT_SHAPE_AND_DIST_ATTR_WITH_DIM_CK(label);
+  EXTRACT_SHAPE_AND_DIST_ATTR_WITH_DIM_CK(smooth_weight);
 
   VLOG(4) << "CSoftmaxWithCrossEntropySPMDRule InferForward Inputs: "
           << "X shape: [" << str_join(x_shape) << "], x_dims_mapping_src: ["
@@ -112,6 +114,7 @@ SpmdInfo CSoftmaxWithMultiLabelCrossEntropyInferSpmd(
 SpmdInfo CSoftmaxWithMultiLabelCrossEntropyGradSpmd(
     const DistMetaTensor& softmax,
     const DistMetaTensor& label,
+    const DistMetaTensor& smooth_weight,
     const DistMetaTensor& loss_grad,
     int ignore_index,
     int ring_id,

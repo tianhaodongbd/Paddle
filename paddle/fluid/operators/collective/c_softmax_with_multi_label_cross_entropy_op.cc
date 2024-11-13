@@ -32,6 +32,11 @@ class CSoftmaxWithMultiLabelCrossEntropyOp
                    "Label",
                    "CSoftmaxWithMultiLabelCrossEntropyOp");
 
+    OP_INOUT_CHECK(ctx->HasInput("SmoothWeight"),
+                   "Input",
+                   "SmoothWeight",
+                   "CSoftmaxWithMultiLabelCrossEntropyOp");
+
     OP_INOUT_CHECK(ctx->HasOutput("Softmax"),
                    "Output",
                    "Softmax",
@@ -43,8 +48,10 @@ class CSoftmaxWithMultiLabelCrossEntropyOp
 
     auto logits_dims = ctx->GetInputDim("Logits");
     auto labels_dims = ctx->GetInputDim("Label");
+    auto smooth_weight_dims = ctx->GetInputDim("SmoothWeight");
 
     auto logits_rank = logits_dims.size();
+    auto labels_rank = labels_dims.size();
     auto axis = logits_rank - 1;
     for (int i = 0; i < logits_rank; i++) {
       if (i != axis) {
@@ -68,6 +75,17 @@ class CSoftmaxWithMultiLabelCrossEntropyOp
             "the last dimension is [%d]",
             labels_dims[logits_rank - 1],
             logits_rank - 1));
+
+    for (int i = 0; i < labels_rank; ++i) {
+      if (ctx->IsRuntime() ||
+          (labels_dims[i] > 0 && smooth_weight_dims[i] > 0)) {
+        PADDLE_ENFORCE_EQ(labels_dims[i],
+                          smooth_weight_dims[i],
+                          common::errors::InvalidArgument(
+                              "Input(Label) and Input(SmoothWeight) should in "
+                              "same shape in dimensions."));
+      }
+    }
 
     ctx->SetOutputDim("Softmax", logits_dims);
 
@@ -94,13 +112,13 @@ class CSoftmaxWithMultiLabelCrossEntropyOpMaker
              "(Tensor, default: Tensor<float>), The input tensor of unscaled "
              "log probabilities, whose dimension :attr:`axis` should be scaled "
              "by softmax.");
-    AddInput(
-        "Label",
-        "(Tensor) The input tensor of groud truth label. If :attr:`soft_label` "
-        "is set to false, Label is a Tensor<int64> in same shape with "
-        "Input(Logits) except the shape in dimension :attr:`axis` as 1. If "
-        "soft_label is set to true, Label is a Tensor<float/double> in same "
-        "shape with Input(Logits).");
+    AddInput("Label",
+             "(Tensor) The input tensor of groud truth label. Label is a "
+             "Tensor<int64> in same shape with "
+             "Input(Logits) except the shape in dimension :attr:`axis` as C.");
+    AddInput("SmoothWeight",
+             "(Tensor) The input tensor is a Tensor<float> in same shape with "
+             "Input(Label)");
     AddOutput(
         "Softmax",
         "(Tensor, default: Tensor<float>), A tensor in same shape with "
@@ -151,6 +169,10 @@ class CSoftmaxWithMultiLabelCrossEntropyOpGrad
         ctx->HasInput("Label"),
         true,
         common::errors::InvalidArgument("Input(Label) should be not null."));
+    PADDLE_ENFORCE_EQ(ctx->HasInput("SmoothWeight"),
+                      true,
+                      common::errors::InvalidArgument(
+                          "Input(SmoothWeight) should be not null."));
 
     PADDLE_ENFORCE_EQ(ctx->HasOutput(framework::GradVarName("Logits")),
                       true,
@@ -178,10 +200,11 @@ class CSoftmaxWithMultiLabelCrossEntropyOpGradMaker
 
  protected:
   void Apply(GradOpPtr<T> op) const override {
-    op->SetType("c_softmax_with_cross_entropy_grad");
+    op->SetType("c_softmax_with_multi_label_cross_entropy_grad");
 
     op->SetInput("Softmax", this->Output("Softmax"));
     op->SetInput("Label", this->Input("Label"));
+    op->SetInput("SmoothWeight", this->Input("SmoothWeight"));
     op->SetInput(framework::GradVarName("Loss"), this->OutputGrad("Loss"));
     op->SetAttrMap(this->Attrs());
     op->SetOutput(framework::GradVarName("Logits"), this->InputGrad("Logits"));

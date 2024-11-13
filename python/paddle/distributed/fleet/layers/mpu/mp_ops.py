@@ -528,6 +528,7 @@ def _c_softmax_with_multi_label_cross_entropy(
         softmax, loss = _legacy_C_ops.c_softmax_with_multi_label_cross_entropy(
             logits,
             label,
+            smooth_weight,
             'ring_id',
             ring_id,
             'rank',
@@ -555,7 +556,11 @@ def _c_softmax_with_multi_label_cross_entropy(
         loss = helper.create_variable_for_type_inference(dtype=logits.dtype)
         helper.append_op(
             type='c_softmax_with_multi_label_cross_entropy',
-            inputs={'Logits': logits, 'Label': label},
+            inputs={
+                'Logits': logits,
+                'Label': label,
+                'SmoothWeight': smooth_weight,
+            },
             outputs={'Softmax': softmax, 'Loss': loss},
             attrs=attrs,
         )

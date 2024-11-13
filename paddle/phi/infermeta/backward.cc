@@ -315,6 +315,7 @@ void CSoftmaxWithCrossEntropyGradInferMeta(const MetaTensor& softmax,
 void CSoftmaxWithMultiLabelCrossEntropyGradInferMeta(
     const MetaTensor& softmax,
     const MetaTensor& label,
+    const MetaTensor& smooth_weight,
     const MetaTensor& loss_grad,
     int64_t ignore_index,
     int ring_id,

@@ -212,6 +212,7 @@ void CSoftmaxWithCrossEntropyInferMeta(const MetaTensor& logits,
 void CSoftmaxWithMultiLabelCrossEntropyInferMeta(
     const MetaTensor& logits,
     const MetaTensor& label,
+    const MetaTensor& smooth_weight,
     int64_t ignore_index,
     int ring_id,
     int rank,

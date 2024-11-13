@@ -26,7 +26,6 @@ limitations under the License. */
 #include "paddle/phi/kernels/funcs/math_function.h"
 #include "paddle/phi/kernels/funcs/softmax_impl.h"
 #include "paddle/utils/string/string_helper.h"
-
 #if defined(PADDLE_WITH_NCCL) || defined(PADDLE_WITH_RCCL)
 #include "paddle/common/flags.h"
 #include "paddle/phi/core/distributed/nccl_comm_context.h"
@@ -126,16 +125,16 @@ __global__ void CaculateSoftLoss(T* loss,
                                  const T* predict_logits,
                                  const T* sum_exp_logits,
                                  const IndexT* label,
+                                 const T* smooth_weight,
                                  const int64_t ignore_index,
                                  const int64_t N,
                                  const int64_t C) {
-  const T prob = static_cast<T>(1.0 / C);
-
   CUDA_KERNEL_LOOP_TYPE(i, N, int64_t) {
     T tmp_loss = static_cast<T>(0);
     int ignore_num = 0;
     for (int j = 0; j < C; ++j) {
       auto real_label = static_cast<int64_t>(label[i * C + j]);
+      auto prob = static_cast<T>(smooth_weight[i * C + j]);
       tmp_loss += ignore_index == real_label
                       ? static_cast<T>(0)
                       : phi::funcs::TolerableValue<T>()(
@@ -143,33 +142,30 @@ __global__ void CaculateSoftLoss(T* loss,
                                  phi::funcs::real_log(sum_exp_logits[i])) -
                              predict_logits[i * C + j]) *
                             prob);
-      ignore_num += ignore_index == real_label ? 1 : 0;
     }
-    loss[i] = ignore_num > 0 ? static_cast<T>(0) : tmp_loss;
+    loss[i] = tmp_loss;
   }
 }
 
 template <typename T, typename IndexT>
 __global__ void CaculateSoftLogitsGrad(T* logits_grad,
-                                       IndexT* is_ignore,
                                        const IndexT* labels,
+                                       const T* smooth_weight,
                                        const IndexT ignore_index,
                                        const int64_t start_index,
                                        const int64_t end_index,
                                        const int64_t N,
                                        const int64_t D,
                                        const int64_t C) {
-  const T prob = static_cast<T>(1.0 / C);
   CUDA_KERNEL_LOOP_TYPE(i, N, int64_t) {
-    is_ignore[i] = labels[i * C];
     for (int j = 0; j < C; ++j) {
       auto real_label = labels[i * C + j];
-      if (real_label == ignore_index) {
-        is_ignore[i] = real_label;
-      }
+      auto prob = smooth_weight[i * C + j];
       if (real_label >= start_index && real_label < end_index) {
         int64_t idx = i * D + real_label - start_index;
-        logits_grad[idx] = logits_grad[idx] - prob;
+        logits_grad[idx] = real_label == ignore_index
+                               ? static_cast<T>(0)
+                               : (logits_grad[idx] - prob);
       }
     }
   }
@@ -178,21 +174,11 @@ __global__ void CaculateSoftLogitsGrad(T* logits_grad,
 template <typename T, typename IndexT>
 __global__ void SoftMaskLabelByIndexGrad(T* logits_grad,
                                          const T* loss_grad,
-                                         const IndexT* is_ignore,
-                                         const int64_t start_index,
-                                         const int64_t end_index,
                                          const int64_t N,
-                                         const int64_t D,
-                                         const int64_t ignore_index) {
+                                         const int64_t D) {
   CUDA_KERNEL_LOOP_TYPE(i, N * D, int64_t) {
     auto row = i / D;
-    auto col = i % D;
-    auto lbl = static_cast<int64_t>(is_ignore[row]);
-    if (lbl == ignore_index) {
-      logits_grad[i] = static_cast<T>(0.0);
-    } else {
-      logits_grad[i] *= loss_grad[row];
-    }
+    logits_grad[i] *= loss_grad[row];
   }
 }
 
@@ -242,6 +228,8 @@ struct CSoftmaxWithMultiLabelCrossEntropyFunctor<phi::GPUContext, T> {
   void operator()(const framework::ExecutionContext& ctx) {
     const phi::DenseTensor* logits = ctx.Input<phi::DenseTensor>("Logits");
     const phi::DenseTensor* labels = ctx.Input<phi::DenseTensor>("Label");
+    const phi::DenseTensor* smooth_weight =
+        ctx.Input<phi::DenseTensor>("SmoothWeight");
     phi::DenseTensor* softmax = ctx.Output<phi::DenseTensor>("Softmax");
     phi::DenseTensor* loss = ctx.Output<phi::DenseTensor>("Loss");
 
@@ -456,6 +444,7 @@ struct CSoftmaxWithMultiLabelCrossEntropyFunctor<phi::GPUContext, T> {
             predicted_logits.data<T>(),
             sum_exp_logits.data<T>(),
             labels->data<int32_t>(),
+            smooth_weight->data<T>(),
             ignore_index,
             N,
             C);
@@ -476,6 +465,7 @@ struct CSoftmaxWithMultiLabelCrossEntropyFunctor<phi::GPUContext, T> {
             predicted_logits.data<T>(),
             sum_exp_logits.data<T>(),
             labels->data<int64_t>(),
+            smooth_weight->data<T>(),
             ignore_index,
             N,
             C);
@@ -504,6 +494,8 @@ struct CSoftmaxWithMultiLableCrossEntropyProcessGroupFunctor<phi::GPUContext,
   void operator()(const framework::ExecutionContext& ctx) {
     const phi::DenseTensor* logits = ctx.Input<phi::DenseTensor>("Logits");
     const phi::DenseTensor* labels = ctx.Input<phi::DenseTensor>("Label");
+    const phi::DenseTensor* smooth_weight =
+        ctx.Input<phi::DenseTensor>("SmoothWeight");
     phi::DenseTensor* softmax = ctx.Output<phi::DenseTensor>("Softmax");
     phi::DenseTensor* loss = ctx.Output<phi::DenseTensor>("Loss");
 
@@ -653,6 +645,7 @@ struct CSoftmaxWithMultiLableCrossEntropyProcessGroupFunctor<phi::GPUContext,
             predicted_logits.data<T>(),
             sum_exp_logits.data<T>(),
             labels->data<int32_t>(),
+            smooth_weight->data<T>(),
             ignore_index,
             N,
             C);
@@ -673,6 +666,7 @@ struct CSoftmaxWithMultiLableCrossEntropyProcessGroupFunctor<phi::GPUContext,
             predicted_logits.data<T>(),
             sum_exp_logits.data<T>(),
             labels->data<int64_t>(),
+            smooth_weight->data<T>(),
             ignore_index,
             N,
             C);
@@ -701,6 +695,8 @@ class CSoftmaxWithMultiLabelCrossEntropyGradCUDAKernel
  public:
   void Compute(const framework::ExecutionContext& context) const override {
     const phi::DenseTensor* labels = context.Input<phi::DenseTensor>("Label");
+    const phi::DenseTensor* smooth_weight =
+        context.Input<phi::DenseTensor>("SmoothWeight");
     const phi::DenseTensor* loss_grad =
         context.Input<phi::DenseTensor>(framework::GradVarName("Loss"));
     phi::DenseTensor* logit_grad =
@@ -736,15 +732,11 @@ class CSoftmaxWithMultiLabelCrossEntropyGradCUDAKernel
 
     if (label_type == framework::proto::VarType::INT32) {
       if (C > 1) {
-        phi::DenseTensor is_ignore;
-        is_ignore = context.AllocateTmpTensor<int32_t, phi::GPUContext>(
-            {N, 1}, dev_ctx);
-
         CaculateSoftLogitsGrad<T, int32_t>
             <<<blocks_cal, threads, 0, dev_ctx.stream()>>>(
                 logit_grad_2d.data<T>(),
-                is_ignore.data<int32_t>(),
                 labels->data<int32_t>(),
+                smooth_weight->data<T>(),
                 ignore_index,
                 start_index,
                 end_index,
@@ -754,14 +746,7 @@ class CSoftmaxWithMultiLabelCrossEntropyGradCUDAKernel
 
         SoftMaskLabelByIndexGrad<T, int32_t>
             <<<blocks, threads, 0, dev_ctx.stream()>>>(
-                logit_grad_2d.data<T>(),
-                loss_grad->data<T>(),
-                is_ignore.data<int32_t>(),
-                start_index,
-                end_index,
-                N,
-                D,
-                ignore_index);
+                logit_grad_2d.data<T>(), loss_grad->data<T>(), N, D);
       } else {
         MaskLabelByIndexGrad<T, int32_t>
             <<<blocks, threads, 0, dev_ctx.stream()>>>(logit_grad_2d.data<T>(),
@@ -775,15 +760,11 @@ class CSoftmaxWithMultiLabelCrossEntropyGradCUDAKernel
       }
     } else if (label_type == framework::proto::VarType::INT64) {
       if (C > 1) {
-        phi::DenseTensor is_ignore;
-        is_ignore = context.AllocateTmpTensor<int64_t, phi::GPUContext>(
-            {N, 1}, dev_ctx);
-
         CaculateSoftLogitsGrad<T, int64_t>
             <<<blocks_cal, threads, 0, dev_ctx.stream()>>>(
                 logit_grad_2d.data<T>(),
-                is_ignore.data<int64_t>(),
                 labels->data<int64_t>(),
+                smooth_weight->data<T>(),
                 ignore_index,
                 start_index,
                 end_index,
@@ -793,14 +774,7 @@ class CSoftmaxWithMultiLabelCrossEntropyGradCUDAKernel
 
         SoftMaskLabelByIndexGrad<T, int64_t>
             <<<blocks, threads, 0, dev_ctx.stream()>>>(
-                logit_grad_2d.data<T>(),
-                loss_grad->data<T>(),
-                is_ignore.data<int64_t>(),
-                start_index,
-                end_index,
-                N,
-                D,
-                ignore_index);
+                logit_grad_2d.data<T>(), loss_grad->data<T>(), N, D);
       } else {
         MaskLabelByIndexGrad<T, int64_t>
             <<<blocks, threads, 0, dev_ctx.stream()>>>(logit_grad_2d.data<T>(),

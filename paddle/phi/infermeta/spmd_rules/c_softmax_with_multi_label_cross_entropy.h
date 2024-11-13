@@ -26,6 +26,7 @@ namespace distributed {
 SpmdInfo CSoftmaxWithMultiLabelCrossEntropyInferSpmd(
     const DistMetaTensor& x,
     const DistMetaTensor& label,
+    const DistMetaTensor& smooth_weight,
     int ignore_index,
     int ring_id,
     int rank,
@@ -34,6 +35,7 @@ SpmdInfo CSoftmaxWithMultiLabelCrossEntropyInferSpmd(
 SpmdInfo CSoftmaxWithMultiLabelCrossEntropyGradSpmd(
     const DistMetaTensor& softmax,
     const DistMetaTensor& label,
+    const DistMetaTensor& smooth_weight,
     const DistMetaTensor& loss_grad,
     int ignore_index,
     int ring_id,

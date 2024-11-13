@@ -1289,19 +1289,23 @@ void CSoftmaxWithCrossEntropyInferMeta(const MetaTensor& logits,
   loss->share_lod(logits);
 }
 
-void CSoftmaxWithMultiLabelCrossEntropyInferMeta(const MetaTensor& logits,
-                                                 const MetaTensor& label,
-                                                 int64_t ignore_index,
-                                                 int ring_id,
-                                                 int rank,
-                                                 int nranks,
-                                                 MetaTensor* softmax,
-                                                 MetaTensor* loss,
-                                                 MetaConfig config) {
+void CSoftmaxWithMultiLabelCrossEntropyInferMeta(
+    const MetaTensor& logits,
+    const MetaTensor& label,
+    const MetaTensor& smooth_weight,
+    int64_t ignore_index,
+    int ring_id,
+    int rank,
+    int nranks,
+    MetaTensor* softmax,
+    MetaTensor* loss,
+    MetaConfig config) {
   auto logits_dims = logits.dims();
   auto labels_dims = label.dims();
+  auto smooth_weight_dims = smooth_weight.dims();
 
   auto logits_rank = logits_dims.size();
+  auto labels_rank = labels_dims.size();
   auto axis = logits_rank - 1;
   for (int i = 0; i < logits_rank; i++) {
     if (i != axis) {
@@ -1324,6 +1328,17 @@ void CSoftmaxWithMultiLabelCrossEntropyInferMeta(const MetaTensor& logits,
           "the last dimension is [%d]",
           labels_dims[logits_rank - 1],
           logits_rank - 1));
+
+  for (int i = 0; i < labels_rank; ++i) {
+    if (config.is_runtime ||
+        (labels_dims[i] > 0 && smooth_weight_dims[i] > 0)) {
+      PADDLE_ENFORCE_EQ(labels_dims[i],
+                        smooth_weight_dims[i],
+                        common::errors::InvalidArgument(
+                            "Input(Label) and Input(SmoothWeight) should in "
+                            "same shape in dimensions"));
+    }
+  }
 
   softmax->set_dims(logits_dims);
   logits_dims[axis] = 1;
