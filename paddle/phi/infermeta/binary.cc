@@ -1319,11 +1319,12 @@ void CSoftmaxWithMultiLabelCrossEntropyInferMeta(
     }
   }
 
-  PADDLE_ENFORCE_EQ(
+  PADDLE_ENFORCE_GE(
       labels_dims[logits_rank - 1],
       1UL,
       common::errors::InvalidArgument(
-          "the last dimension of Input(Label) should be 1."
+          "the last dimension of Input(Label) should be greater than or equal "
+          "to 1."
           "But received: the last dimension of Input(Label) is [%d],"
           "the last dimension is [%d]",
           labels_dims[logits_rank - 1],

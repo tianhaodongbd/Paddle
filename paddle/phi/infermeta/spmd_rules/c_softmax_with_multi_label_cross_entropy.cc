@@ -53,7 +53,7 @@ SpmdInfo CSoftmaxWithMultiLabelCrossEntropyInferSpmd(
   EXTRACT_SHAPE_AND_DIST_ATTR_WITH_DIM_CK(label);
   EXTRACT_SHAPE_AND_DIST_ATTR_WITH_DIM_CK(smooth_weight);
 
-  VLOG(4) << "CSoftmaxWithCrossEntropySPMDRule InferForward Inputs: "
+  VLOG(4) << "CSoftmaxWithMultiLabelCrossEntropySPMDRule InferForward Inputs: "
           << "X shape: [" << str_join(x_shape) << "], x_dims_mapping_src: ["
           << str_join(x_dims_mapping_src) << "]; Label shape: ["
           << str_join(label_shape) << "], Label dims mapping: ["
