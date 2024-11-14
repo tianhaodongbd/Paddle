@@ -72,10 +72,14 @@ class TestCSoftmaxWithCrossEntropy(unittest.TestCase):
         self.num_class = 100
         self.batch_size = 1024
         self.C = 4
-        fleet.init(is_collective=True)
         strategy = fleet.DistributedStrategy()
-        strategy.tensor_parallel = True
-        strategy.tensor_parallel_configs = {'tensor_parallel_degree': 2}
+        model_parallel_size = 2
+        strategy.hybrid_configs = {
+            "dp_degree": 1,
+            "mp_degree": model_parallel_size,
+            "pp_degree": 1,
+        }
+        fleet.init(is_collective=True, strategy=strategy)
 
     def test_model(self, data_type="float32"):
         rank = fleet.worker_index()
