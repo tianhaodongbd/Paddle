@@ -27,15 +27,20 @@ void GetMultiLabelCrossEntropyNotations(int x_ndim,
                                         std::string* x_axes_dst,
                                         std::string* label_axes_src,
                                         std::string* label_axes_dst,
+                                        std::string* smooth_weight_axes_src,
+                                        std::string* smooth_weight_axes_dst,
                                         std::string* loss_axes,
                                         std::string* softmax_axes_dst) {
   std::string alphabet = "abcdefghijklmnopqrstuvwxyz";
   *x_axes_src = GetBroadcastAxes(x_ndim, x_ndim, alphabet);
   *x_axes_dst = *x_axes_src;
   *label_axes_src = *x_axes_src;
-  (*label_axes_src)[x_ndim - 1] = '1';
+  (*label_axes_src)[x_ndim - 1] = (*x_axes_src)[x_ndim - 1] + 1;
   *label_axes_dst = *label_axes_src;
-  *loss_axes = *label_axes_src;
+  *smooth_weight_axes_src = *label_axes_src;
+  *smooth_weight_axes_dst = *smooth_weight_axes_src;
+  *loss_axes = *x_axes_src;
+  (*loss_axes)[x_ndim - 1] = '1';
   *softmax_axes_dst = *x_axes_dst;
 }
 
@@ -61,21 +66,26 @@ SpmdInfo CSoftmaxWithMultiLabelCrossEntropyInferSpmd(
           << ignore_index << "]";
 
   // Step1: Build Einsum Notation
-  std::string x_axes_src, x_axes_dst, label_axes_src, label_axes_dst, loss_axes,
+  std::string x_axes_src, x_axes_dst, label_axes_src, label_axes_dst,
+      smooth_weight_axes_src, smooth_weight_axes_dst, loss_axes,
       softmax_axes_dst;
   GetMultiLabelCrossEntropyNotations(x_ndim,
                                      &x_axes_src,
                                      &x_axes_dst,
                                      &label_axes_src,
                                      &label_axes_dst,
+                                     &smooth_weight_axes_src,
+                                     &smooth_weight_axes_dst,
                                      &loss_axes,
                                      &softmax_axes_dst);
 
   // Step2: Sharding Propagation
   // Step2.1: merge input shardings
   std::unordered_map<std::string, int64_t> axis_to_dim_map =
-      ShardingMergeForTensors({{x_axes_src, x_dims_mapping_src},
-                               {label_axes_src, label_dims_mapping_src}});
+      ShardingMergeForTensors(
+          {{x_axes_src, x_dims_mapping_src},
+           {label_axes_src, label_dims_mapping_src},
+           {smooth_weight_axes_src, smooth_weight_dims_mapping_src}});
 
   // Step2.2: infer output dims mappings
   TensorDistAttr loss_dist_attr_dst =
@@ -95,6 +105,10 @@ SpmdInfo CSoftmaxWithMultiLabelCrossEntropyInferSpmd(
       CopyTensorDistAttrForOutput(label_dist_attr_src);
   label_dist_attr_dst.set_dims_mapping(
       GetDimsMappingForAxes(label_axes_dst, axis_to_dim_map));
+  TensorDistAttr smooth_weight_dist_attr_dst =
+      CopyTensorDistAttrForOutput(smooth_weight_dist_attr_src);
+  smooth_weight_dist_attr_dst.set_dims_mapping(
+      GetDimsMappingForAxes(smooth_weight_axes_dst, axis_to_dim_map));
 
   VLOG(4) << "CSoftmaxWithMultiLabelCrossEntropyInferSpmd:";
   VLOG(4) << "ignore_index: [" << ignore_index << "].";
@@ -104,11 +118,13 @@ SpmdInfo CSoftmaxWithMultiLabelCrossEntropyInferSpmd(
 
   LOG_SPMD_INPUT(x);
   LOG_SPMD_INPUT(label);
+  LOG_SPMD_INPUT(smooth_weight);
   LOG_SPMD_OUTPUT(softmax_dist_attr_dst);
   LOG_SPMD_OUTPUT(loss_dist_attr_dst);
 
-  return SpmdInfo({x_dist_attr_dst, label_dist_attr_dst},
-                  {softmax_dist_attr_dst, loss_dist_attr_dst});
+  return SpmdInfo(
+      {x_dist_attr_dst, label_dist_attr_dst, smooth_weight_dist_attr_dst},
+      {softmax_dist_attr_dst, loss_dist_attr_dst});
 }
 
 SpmdInfo CSoftmaxWithMultiLabelCrossEntropyGradSpmd(
@@ -122,29 +138,42 @@ SpmdInfo CSoftmaxWithMultiLabelCrossEntropyGradSpmd(
     int nranks) {
   EXTRACT_SHAPE_AND_DIST_ATTR_WITH_DIM_CK(softmax);
   EXTRACT_SHAPE_AND_DIST_ATTR_WITH_DIM_CK(label);
+  EXTRACT_SHAPE_AND_DIST_ATTR_WITH_DIM_CK(smooth_weight);
   EXTRACT_SHAPE_AND_DIST_ATTR_WITH_DIM_CK(loss_grad);
 
-  std::string label_axes_src, label_axes_dst, softmax_axes_src,
-      softmax_axes_dst, loss_grad_axes;
+  std::string label_axes_src, label_axes_dst, smooth_weight_axes_src,
+      smooth_weight_axes_dst, softmax_axes_src, softmax_axes_dst,
+      loss_grad_axes;
   std::string alphabet = "abcdefghijklmnopqrstuvwxyz";
   auto x_axes_src = alphabet.substr(0, loss_grad_ndim);
   auto x_axes_dst = x_axes_src;
   label_axes_src = x_axes_src;
-  label_axes_src[loss_grad_ndim - 1] = '1';
+  label_axes_src[loss_grad_ndim - 1] = x_axes_src[loss_grad_ndim - 1] + 1;
   label_axes_dst = label_axes_src;
-  loss_grad_axes = label_axes_src;
+  smooth_weight_axes_src = label_axes_src;
+  smooth_weight_axes_dst = label_axes_src;
+  loss_grad_axes = x_axes_src;
+  loss_grad_axes[loss_grad_ndim - 1] = '1';
   softmax_axes_src = x_axes_dst;
   softmax_axes_dst = x_axes_dst;
 
   std::unordered_map<std::string, int64_t> axis_to_dim_map =
-      ShardingMergeForTensors({{label_axes_src, label_dims_mapping_src},
-                               {softmax_axes_src, softmax_dims_mapping_src},
-                               {loss_grad_axes, loss_grad_dims_mapping_src}});
+      ShardingMergeForTensors(
+          {{label_axes_src, label_dims_mapping_src},
+           {smooth_weight_axes_src, smooth_weight_dims_mapping_src},
+           {softmax_axes_src, softmax_dims_mapping_src},
+           {loss_grad_axes, loss_grad_dims_mapping_src}});
 
   auto label_dist_attr_dst = CopyTensorDistAttrForOutput(label_dist_attr_src);
   auto label_dims_mapping_dst =
       GetDimsMappingForAxes(label_axes_dst, axis_to_dim_map, true);
   label_dist_attr_dst.set_dims_mapping(label_dims_mapping_dst);
+
+  auto smooth_weight_dist_attr_dst =
+      CopyTensorDistAttrForOutput(smooth_weight_dist_attr_src);
+  auto smooth_weight_dims_mapping_dst =
+      GetDimsMappingForAxes(smooth_weight_axes_dst, axis_to_dim_map, true);
+  smooth_weight_dist_attr_dst.set_dims_mapping(smooth_weight_dims_mapping_dst);
 
   auto softmax_dist_attr_dst =
       CopyTensorDistAttrForOutput(softmax_dist_attr_src);
@@ -163,10 +192,14 @@ SpmdInfo CSoftmaxWithMultiLabelCrossEntropyGradSpmd(
 
   LOG_SPMD_INPUT(softmax);
   LOG_SPMD_INPUT(label);
+  LOG_SPMD_INPUT(smooth_weight);
   LOG_SPMD_INPUT(loss_grad);
   LOG_SPMD_OUTPUT(x_grad);
 
-  return {{softmax_dist_attr_dst, label_dist_attr_dst, loss_grad_dist_attr_dst},
+  return {{softmax_dist_attr_dst,
+           label_dist_attr_dst,
+           smooth_weight_dist_attr_dst,
+           loss_grad_dist_attr_dst},
           {x_grad}};
 }
 }  // namespace phi::distributed
