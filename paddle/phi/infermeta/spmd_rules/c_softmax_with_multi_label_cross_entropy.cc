@@ -62,7 +62,9 @@ SpmdInfo CSoftmaxWithMultiLabelCrossEntropyInferSpmd(
           << "X shape: [" << str_join(x_shape) << "], x_dims_mapping_src: ["
           << str_join(x_dims_mapping_src) << "]; Label shape: ["
           << str_join(label_shape) << "], Label dims mapping: ["
-          << str_join(label_dims_mapping_src) << "]; ignore_index: ["
+          << str_join(label_dims_mapping_src) << "]; Smooth_weight shape: ["
+          << str_join(smooth_weight_shape) << "], Smooth_weight dim mapping: ["
+          << str_join(smooth_weight_dims_mapping_src) << "], ignore_index: ["
           << ignore_index << "]";
 
   // Step1: Build Einsum Notation

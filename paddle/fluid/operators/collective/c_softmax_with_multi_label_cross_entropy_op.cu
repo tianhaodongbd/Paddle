@@ -85,7 +85,6 @@ __global__ void CaculateSoftLoss(T* loss,
                                  const int64_t C) {
   CUDA_KERNEL_LOOP_TYPE(i, N, int64_t) {
     T tmp_loss = static_cast<T>(0);
-    int ignore_num = 0;
     for (int j = 0; j < C; ++j) {
       auto real_label = static_cast<int64_t>(label[i * C + j]);
       auto prob = static_cast<T>(smooth_weight[i * C + j]);
