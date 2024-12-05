@@ -82,21 +82,28 @@ __global__ void CaculateSoftLoss(T* loss,
                                  const T* smooth_weight,
                                  const int64_t ignore_index,
                                  const int64_t N,
-                                 const int64_t C) {
+                                 const int64_t C,
+                                 const bool sum_loss) {
   CUDA_KERNEL_LOOP_TYPE(i, N, int64_t) {
     T tmp_loss = static_cast<T>(0);
+    loss[i] = static_cast<T>(0);
+    T log_sum_exp_logits = phi::funcs::TolerableValue<T>()(
+        phi::funcs::real_log(sum_exp_logits[i]));
     for (int j = 0; j < C; ++j) {
-      auto real_label = static_cast<int64_t>(label[i * C + j]);
-      auto prob = static_cast<T>(smooth_weight[i * C + j]);
-      tmp_loss += ignore_index == real_label
-                      ? static_cast<T>(0)
-                      : phi::funcs::TolerableValue<T>()(
-                            (phi::funcs::TolerableValue<T>()(
-                                 phi::funcs::real_log(sum_exp_logits[i])) -
-                             predict_logits[i * C + j]) *
-                            prob);
+      int64_t label_idx = i * C + j;
+      auto real_label = static_cast<int64_t>(label[label_idx]);
+      auto prob = static_cast<T>(smooth_weight[label_idx]);
+      tmp_loss =
+          ignore_index == real_label
+              ? static_cast<T>(0)
+              : phi::funcs::TolerableValue<T>()(
+                    (log_sum_exp_logits - predict_logits[label_idx]) * prob);
+      if (sum_loss) {
+        loss[i] += tmp_loss;
+      } else {
+        loss[label_idx] = tmp_loss;
+      }
     }
-    loss[i] = tmp_loss;
   }
 }
 
@@ -128,10 +135,12 @@ template <typename T, typename IndexT>
 __global__ void SoftMaskLabelByIndexGrad(T* logits_grad,
                                          const T* loss_grad,
                                          const int64_t N,
-                                         const int64_t D) {
+                                         const int64_t D,
+                                         const int64_t C,
+                                         const bool sum_loss) {
   CUDA_KERNEL_LOOP_TYPE(i, N * D, int64_t) {
-    auto row = i / D;
-    logits_grad[i] *= loss_grad[row];
+    auto loss_grad_idx = sum_loss ? (i / D) : (i / D * C);
+    logits_grad[i] *= loss_grad[loss_grad_idx];
   }
 }
 
@@ -164,6 +173,7 @@ struct CSoftmaxWithMultiLabelCrossEntropyFunctor<phi::GPUContext, T> {
     phi::DenseTensor* loss = ctx.Output<phi::DenseTensor>("Loss");
 
     const int64_t ignore_index = ctx.Attr<int64_t>("ignore_index");
+    const bool sum_loss = ctx.Attr<bool>("sum_loss");
     const int rid = ctx.Attr<int>("ring_id");
     const int nranks = ctx.Attr<int>("nranks");
     const int rank = ctx.Attr<int>("rank");
@@ -220,7 +230,8 @@ struct CSoftmaxWithMultiLabelCrossEntropyFunctor<phi::GPUContext, T> {
     phi::DenseTensor logits_2d, softmax_2d, loss_2d;
     logits_2d.ShareDataWith(*logits).Resize({N, D});
     softmax_2d.ShareDataWith(*softmax).Resize({N, D});
-    loss_2d.ShareDataWith(*loss).Resize({N, 1});
+    int64_t loss_last_dim = sum_loss ? 1 : C;
+    loss_2d.ShareDataWith(*loss).Resize({N, loss_last_dim});
 
     auto eigen_logits = phi::funcs::EigenMatrix<T>::From(logits_2d);
     auto eigen_softmax = phi::funcs::EigenMatrix<T>::From(softmax_2d);
@@ -349,7 +360,8 @@ struct CSoftmaxWithMultiLabelCrossEntropyFunctor<phi::GPUContext, T> {
                                                      smooth_weight->data<T>(),
                                                      ignore_index,
                                                      N,
-                                                     C);
+                                                     C,
+                                                     sum_loss);
 
     } else {
       CaculateSoftLoss<T, int64_t>
@@ -360,7 +372,8 @@ struct CSoftmaxWithMultiLabelCrossEntropyFunctor<phi::GPUContext, T> {
                                                      smooth_weight->data<T>(),
                                                      ignore_index,
                                                      N,
-                                                     C);
+                                                     C,
+                                                     sum_loss);
     }
 
     auto eigen_sum_exp_logits =
@@ -383,6 +396,7 @@ struct CSoftmaxWithMultiLableCrossEntropyProcessGroupFunctor<phi::GPUContext,
     phi::DenseTensor* loss = ctx.Output<phi::DenseTensor>("Loss");
 
     const int64_t ignore_index = ctx.Attr<int64_t>("ignore_index");
+    const bool sum_loss = ctx.Attr<bool>("sum_loss");
     const int rid = ctx.Attr<int>("ring_id");
     const int nranks = ctx.Attr<int>("nranks");
     const int rank = ctx.Attr<int>("rank");
@@ -410,7 +424,8 @@ struct CSoftmaxWithMultiLableCrossEntropyProcessGroupFunctor<phi::GPUContext,
     phi::DenseTensor logits_2d, softmax_2d, loss_2d;
     logits_2d.ShareDataWith(*logits).Resize({N, D});
     softmax_2d.ShareDataWith(*softmax).Resize({N, D});
-    loss_2d.ShareDataWith(*loss).Resize({N, 1});
+    int64_t loss_last_dim = sum_loss ? 1 : C;
+    loss_2d.ShareDataWith(*loss).Resize({N, loss_last_dim});
 
     auto eigen_logits = phi::funcs::EigenMatrix<T>::From(logits_2d);
     auto eigen_softmax = phi::funcs::EigenMatrix<T>::From(softmax_2d);
@@ -504,7 +519,8 @@ struct CSoftmaxWithMultiLableCrossEntropyProcessGroupFunctor<phi::GPUContext,
                                                      smooth_weight->data<T>(),
                                                      ignore_index,
                                                      N,
-                                                     C);
+                                                     C,
+                                                     sum_loss);
 
     } else {
       CaculateSoftLoss<T, int64_t>
@@ -515,7 +531,8 @@ struct CSoftmaxWithMultiLableCrossEntropyProcessGroupFunctor<phi::GPUContext,
                                                      smooth_weight->data<T>(),
                                                      ignore_index,
                                                      N,
-                                                     C);
+                                                     C,
+                                                     sum_loss);
     }
 
     auto eigen_sum_exp_logits =
@@ -542,6 +559,7 @@ class CSoftmaxWithMultiLabelCrossEntropyGradCUDAKernel
         context.Input<phi::DenseTensor>("Softmax");
 
     const int64_t ignore_index = context.Attr<int64_t>("ignore_index");
+    const bool sum_loss = context.Attr<bool>("sum_loss");
     const int rank = context.Attr<int>("rank");
     auto& dev_ctx = context.template device_context<phi::GPUContext>();
 
@@ -582,7 +600,7 @@ class CSoftmaxWithMultiLabelCrossEntropyGradCUDAKernel
 
       SoftMaskLabelByIndexGrad<T, int32_t>
           <<<blocks, threads, 0, dev_ctx.stream()>>>(
-              logit_grad_2d.data<T>(), loss_grad->data<T>(), N, D);
+              logit_grad_2d.data<T>(), loss_grad->data<T>(), N, D, C, sum_loss);
 
     } else if (label_type == framework::proto::VarType::INT64) {
       CaculateSoftLogitsGrad<T, int64_t>
@@ -599,7 +617,7 @@ class CSoftmaxWithMultiLabelCrossEntropyGradCUDAKernel
 
       SoftMaskLabelByIndexGrad<T, int64_t>
           <<<blocks, threads, 0, dev_ctx.stream()>>>(
-              logit_grad_2d.data<T>(), loss_grad->data<T>(), N, D);
+              logit_grad_2d.data<T>(), loss_grad->data<T>(), N, D, C, sum_loss);
     }
   }
 };

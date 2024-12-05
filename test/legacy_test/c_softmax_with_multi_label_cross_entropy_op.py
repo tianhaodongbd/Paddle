@@ -81,9 +81,7 @@ class TestCSoftmaxWithCrossEntropy(unittest.TestCase):
         }
         fleet.init(is_collective=True, strategy=strategy)
 
-    def test_model(self, data_type="float32"):
-        rank = fleet.worker_index()
-
+    def get_input_data(self, data_type="float32"):
         # get data that is shared by both ranks
         np.random.seed(os.getuid())
 
@@ -99,8 +97,6 @@ class TestCSoftmaxWithCrossEntropy(unittest.TestCase):
         row_sum = np.sum(prob, axis=1, keepdims=True)
         smooth_weight = prob / row_sum
 
-        ignore_index = -100
-
         local_elements = int(self.num_class / 2)
         # get input data for rank 0
         np.random.seed(0)
@@ -114,38 +110,21 @@ class TestCSoftmaxWithCrossEntropy(unittest.TestCase):
             low=-40.0, high=40.0, size=(self.batch_size, local_elements)
         ).astype(data_type)
 
+        np.random.seed(os.getuid())
+        loss_grad = np.random.rand(self.batch_size, 1).astype(data_type)
+
+        return input0, input1, label, smooth_weight, loss_grad
+
+    def cross_entropy_np(
+        self, input0, input1, label, smooth_weight, ignore_index, loss_grad
+    ):
         # get combined input data
         inputs = np.concatenate((input0, input1), axis=1)
-
-        input0_pd = paddle.to_tensor(input0, stop_gradient=False)
-        input1_pd = paddle.to_tensor(input1, stop_gradient=False)
-        inputs_pd = paddle.to_tensor(inputs, stop_gradient=False)
-
-        if rank == 0:
-            loss, softmax = _c_softmax_with_multi_label_cross_entropy(
-                input0_pd,
-                paddle.to_tensor(label),
-                paddle.to_tensor(smooth_weight).astype(data_type),
-                ignore_index=ignore_index,
-                return_softmax=True,
-            )
-        else:
-            loss, softmax = _c_softmax_with_multi_label_cross_entropy(
-                input1_pd,
-                paddle.to_tensor(label),
-                paddle.to_tensor(smooth_weight).astype(data_type),
-                ignore_index=ignore_index,
-                return_softmax=True,
-            )
-        paddle.device.cuda.synchronize()
-        softmax_list = []
-        paddle.distributed.all_gather(softmax_list, softmax)
 
         # calculate analytic result
         need_softmax = np.apply_along_axis(stable_softmax, 1, inputs)
 
         need_label = np.zeros_like(inputs)
-
         for i in range(len(label)):
             for j, c in enumerate(label[i]):
                 need_label[i][c] = smooth_weight[i][j]
@@ -154,9 +133,49 @@ class TestCSoftmaxWithCrossEntropy(unittest.TestCase):
             need_softmax, need_label, True, 1, ignore_index=ignore_index
         )
 
-        np.random.seed(os.getuid())
-        loss_grad = np.random.rand(self.batch_size, 1).astype(data_type)
+        need_logits_grad = softmax_with_cross_entropy_grad(
+            need_softmax, need_label, loss_grad, 1
+        )
+        return need_softmax, need_loss, need_logits_grad
+
+    def test_model(self, data_type="float32"):
+        rank = fleet.worker_index()
+
+        input0, input1, label, smooth_weight, loss_grad = self.get_input_data(
+            data_type=data_type
+        )
+
+        # convert to paddle tensor
+        input0_pd = paddle.to_tensor(input0, stop_gradient=False)
+        input1_pd = paddle.to_tensor(input1, stop_gradient=False)
+        label_pd = paddle.to_tensor(label)
+        smooth_weight_pd = paddle.to_tensor(smooth_weight).astype(data_type)
         loss_grad_pd = paddle.to_tensor(loss_grad)
+
+        ignore_index = -100
+
+        if rank == 0:
+            loss, softmax = _c_softmax_with_multi_label_cross_entropy(
+                input0_pd,
+                label_pd,
+                smooth_weight_pd,
+                ignore_index=ignore_index,
+                return_softmax=True,
+            )
+        else:
+            loss, softmax = _c_softmax_with_multi_label_cross_entropy(
+                input1_pd,
+                label_pd,
+                smooth_weight_pd,
+                ignore_index=ignore_index,
+                return_softmax=True,
+            )
+        paddle.device.cuda.synchronize()
+        softmax_list = []
+        paddle.distributed.all_gather(softmax_list, softmax)
+        softmax = np.concatenate(
+            (softmax_list[0].numpy(), softmax_list[1].numpy()), axis=1
+        )
 
         paddle.autograd.backward([loss], [loss_grad_pd])
 
@@ -164,12 +183,71 @@ class TestCSoftmaxWithCrossEntropy(unittest.TestCase):
         paddle.distributed.all_gather(grad_list, eval(f'input{rank}_pd.grad'))
         inputs_grad = paddle.concat(grad_list, axis=-1)
 
-        need_logits_grad = softmax_with_cross_entropy_grad(
-            need_softmax, need_label, loss_grad, 1
+        # calculate numpy cross entropy result
+        need_softmax, need_loss, need_logits_grad = self.cross_entropy_np(
+            input0, input1, label, smooth_weight, ignore_index, loss_grad
         )
 
+        # compare results
+        rtol_f = 1e-6
+        np.testing.assert_allclose(loss.numpy(), need_loss, rtol=rtol_f)
+        np.testing.assert_allclose(softmax, need_softmax, rtol=rtol_f)
+        rtol_b = 1e-5
+        np.testing.assert_allclose(
+            inputs_grad.numpy(), need_logits_grad, rtol=rtol_b
+        )
+
+    def test_model_with_sum_loss(self, data_type="float32"):
+        rank = fleet.worker_index()
+
+        input0, input1, label, smooth_weight, loss_grad = self.get_input_data(
+            data_type=data_type
+        )
+
+        # convert to paddle tensor
+        input0_pd = paddle.to_tensor(input0, stop_gradient=False)
+        input1_pd = paddle.to_tensor(input1, stop_gradient=False)
+        label_pd = paddle.to_tensor(label)
+        smooth_weight_pd = paddle.to_tensor(smooth_weight).astype(data_type)
+        loss_grad_pd = paddle.to_tensor(loss_grad)
+
+        ignore_index = -100
+
+        if rank == 0:
+            loss_tmp, softmax = _c_softmax_with_multi_label_cross_entropy(
+                input0_pd,
+                label_pd,
+                smooth_weight_pd,
+                ignore_index=ignore_index,
+                return_softmax=True,
+                sum_loss=False,
+            )
+        else:
+            loss_tmp, softmax = _c_softmax_with_multi_label_cross_entropy(
+                input1_pd,
+                label_pd,
+                smooth_weight_pd,
+                ignore_index=ignore_index,
+                return_softmax=True,
+                sum_loss=False,
+            )
+        paddle.device.cuda.synchronize()
+        loss = paddle.sum(loss_tmp, axis=-1, keepdim=True)
+        softmax_list = []
+        paddle.distributed.all_gather(softmax_list, softmax)
         softmax = np.concatenate(
             (softmax_list[0].numpy(), softmax_list[1].numpy()), axis=1
+        )
+
+        paddle.autograd.backward([loss], [loss_grad_pd])
+
+        grad_list = []
+        paddle.distributed.all_gather(grad_list, eval(f'input{rank}_pd.grad'))
+        inputs_grad = paddle.concat(grad_list, axis=-1)
+
+        # calculate numpy cross entropy result
+        need_softmax, need_loss, need_logits_grad = self.cross_entropy_np(
+            input0, input1, label, smooth_weight, ignore_index, loss_grad
         )
 
         # compare results

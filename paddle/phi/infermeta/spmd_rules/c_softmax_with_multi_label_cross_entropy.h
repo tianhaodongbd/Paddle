@@ -28,6 +28,7 @@ SpmdInfo CSoftmaxWithMultiLabelCrossEntropyInferSpmd(
     const DistMetaTensor& label,
     const DistMetaTensor& smooth_weight,
     int ignore_index,
+    bool sum_loss,
     int ring_id,
     int rank,
     int nranks);
@@ -38,6 +39,7 @@ SpmdInfo CSoftmaxWithMultiLabelCrossEntropyGradSpmd(
     const DistMetaTensor& smooth_weight,
     const DistMetaTensor& loss_grad,
     int ignore_index,
+    bool sum_loss,
     int ring_id,
     int rank,
     int nranks);

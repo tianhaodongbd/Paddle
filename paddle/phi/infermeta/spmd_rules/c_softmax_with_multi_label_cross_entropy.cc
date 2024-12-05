@@ -30,7 +30,8 @@ void GetMultiLabelCrossEntropyNotations(int x_ndim,
                                         std::string* smooth_weight_axes_src,
                                         std::string* smooth_weight_axes_dst,
                                         std::string* loss_axes,
-                                        std::string* softmax_axes_dst) {
+                                        std::string* softmax_axes_dst,
+                                        bool sum_loss) {
   std::string alphabet = "abcdefghijklmnopqrstuvwxyz";
   *x_axes_src = GetBroadcastAxes(x_ndim, x_ndim, alphabet);
   *x_axes_dst = *x_axes_src;
@@ -39,8 +40,12 @@ void GetMultiLabelCrossEntropyNotations(int x_ndim,
   *label_axes_dst = *label_axes_src;
   *smooth_weight_axes_src = *label_axes_src;
   *smooth_weight_axes_dst = *smooth_weight_axes_src;
-  *loss_axes = *x_axes_src;
-  (*loss_axes)[x_ndim - 1] = '1';
+  if (sum_loss) {
+    *loss_axes = *x_axes_src;
+    (*loss_axes)[x_ndim - 1] = '1';
+  } else {
+    *loss_axes = *label_axes_src;
+  }
   *softmax_axes_dst = *x_axes_dst;
 }
 
@@ -49,6 +54,7 @@ SpmdInfo CSoftmaxWithMultiLabelCrossEntropyInferSpmd(
     const DistMetaTensor& label,
     const DistMetaTensor& smooth_weight,
     int ignore_index,
+    bool sum_loss,
     int ring_id,
     int rank,
     int nranks) {
@@ -79,7 +85,8 @@ SpmdInfo CSoftmaxWithMultiLabelCrossEntropyInferSpmd(
                                      &smooth_weight_axes_src,
                                      &smooth_weight_axes_dst,
                                      &loss_axes,
-                                     &softmax_axes_dst);
+                                     &softmax_axes_dst,
+                                     sum_loss);
 
   // Step2: Sharding Propagation
   // Step2.1: merge input shardings
@@ -135,6 +142,7 @@ SpmdInfo CSoftmaxWithMultiLabelCrossEntropyGradSpmd(
     const DistMetaTensor& smooth_weight,
     const DistMetaTensor& loss_grad,
     int ignore_index,
+    bool sum_loss,
     int ring_id,
     int rank,
     int nranks) {
@@ -154,8 +162,13 @@ SpmdInfo CSoftmaxWithMultiLabelCrossEntropyGradSpmd(
   label_axes_dst = label_axes_src;
   smooth_weight_axes_src = label_axes_src;
   smooth_weight_axes_dst = label_axes_src;
-  loss_grad_axes = x_axes_src;
-  loss_grad_axes[loss_grad_ndim - 1] = '1';
+  if (sum_loss) {
+    loss_grad_axes = x_axes_src;
+    loss_grad_axes[loss_grad_ndim - 1] = '1';
+  } else {
+    loss_grad_axes = label_axes_src;
+  }
+
   softmax_axes_src = x_axes_dst;
   softmax_axes_dst = x_axes_dst;
 
