@@ -804,7 +804,7 @@ class ParallelMultiLabelCrossEntropy(paddle.nn.Layer):
         ignore_index (long int, optional):  Specifies a target value that is ignored and
             does not contribute to the loss. A negative value means that no label value
             needs to be ignored. Default is -100 .
-        sum_loss (bool, optional): Whether to sum the loss. Default is True .
+        sum_multi_label_loss (bool, optional): Whether to sum the loss. Default is True .
 
     Examples:
         .. code-block:: python
@@ -817,7 +817,11 @@ class ParallelMultiLabelCrossEntropy(paddle.nn.Layer):
     """
 
     def __init__(
-        self, mp_group=None, name=None, ignore_index=-100, sum_loss=True
+        self,
+        mp_group=None,
+        name=None,
+        ignore_index=-100,
+        sum_multi_label_loss=True,
     ):
         super().__init__()
         self.name = name
@@ -837,7 +841,7 @@ class ParallelMultiLabelCrossEntropy(paddle.nn.Layer):
             else mp_group.rank
         )
         self.ignore_index = ignore_index
-        self.sum_loss = sum_loss
+        self.sum_multi_label_loss = sum_multi_label_loss
 
     def forward(self, input, label, smooth_weight):
         loss = mp_ops._c_softmax_with_multi_label_cross_entropy(
@@ -846,6 +850,6 @@ class ParallelMultiLabelCrossEntropy(paddle.nn.Layer):
             smooth_weight,
             group=self.model_parallel_group,
             ignore_index=self.ignore_index,
-            sum_loss=self.sum_loss,
+            sum_multi_label_loss=self.sum_multi_label_loss,
         )
         return loss

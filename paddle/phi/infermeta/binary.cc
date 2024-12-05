@@ -1294,7 +1294,7 @@ void CSoftmaxWithMultiLabelCrossEntropyInferMeta(
     const MetaTensor& label,
     const MetaTensor& smooth_weight,
     int64_t ignore_index,
-    bool sum_loss,
+    bool sum_multi_label_loss,
     int ring_id,
     int rank,
     int nranks,
@@ -1343,7 +1343,7 @@ void CSoftmaxWithMultiLabelCrossEntropyInferMeta(
   }
 
   softmax->set_dims(logits_dims);
-  if (sum_loss) {
+  if (sum_multi_label_loss) {
     labels_dims[axis] = 1;
   }
   loss->set_dims(labels_dims);

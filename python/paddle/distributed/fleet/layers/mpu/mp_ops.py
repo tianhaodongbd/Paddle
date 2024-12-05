@@ -494,7 +494,7 @@ def _c_softmax_with_multi_label_cross_entropy(
     group=None,
     return_softmax=False,
     ignore_index=-100,
-    sum_loss=True,
+    sum_multi_label_loss=True,
 ):
     if group is not None and not group.is_member():
         return
@@ -538,8 +538,8 @@ def _c_softmax_with_multi_label_cross_entropy(
             nranks,
             'ignore_index',
             ignore_index,
-            'sum_loss',
-            sum_loss,
+            'sum_multi_label_loss',
+            sum_multi_label_loss,
         )
         if not return_softmax:
             return loss
@@ -551,7 +551,7 @@ def _c_softmax_with_multi_label_cross_entropy(
             'rank': rank,
             'nranks': nranks,
             'ignore_index': ignore_index,
-            'sum_loss': sum_loss,
+            'sum_multi_label_loss': sum_multi_label_loss,
         }
         helper = LayerHelper(
             'c_softmax_with_multi_label_cross_entropy', **locals()

@@ -197,7 +197,7 @@ class TestCSoftmaxWithCrossEntropy(unittest.TestCase):
             inputs_grad.numpy(), need_logits_grad, rtol=rtol_b
         )
 
-    def test_model_with_sum_loss(self, data_type="float32"):
+    def test_model_with_sum_multi_label_loss(self, data_type="float32"):
         rank = fleet.worker_index()
 
         input0, input1, label, smooth_weight, loss_grad = self.get_input_data(
@@ -220,7 +220,7 @@ class TestCSoftmaxWithCrossEntropy(unittest.TestCase):
                 smooth_weight_pd,
                 ignore_index=ignore_index,
                 return_softmax=True,
-                sum_loss=False,
+                sum_multi_label_loss=False,
             )
         else:
             loss_tmp, softmax = _c_softmax_with_multi_label_cross_entropy(
@@ -229,7 +229,7 @@ class TestCSoftmaxWithCrossEntropy(unittest.TestCase):
                 smooth_weight_pd,
                 ignore_index=ignore_index,
                 return_softmax=True,
-                sum_loss=False,
+                sum_multi_label_loss=False,
             )
         paddle.device.cuda.synchronize()
         loss = paddle.sum(loss_tmp, axis=-1, keepdim=True)

@@ -89,8 +89,8 @@ class CSoftmaxWithMultiLabelCrossEntropyOp
 
     ctx->SetOutputDim("Softmax", logits_dims);
 
-    bool sum_loss = ctx->Attrs().Get<bool>("sum_loss");
-    if (sum_loss) {
+    bool sum_multi_label_loss = ctx->Attrs().Get<bool>("sum_multi_label_loss");
+    if (sum_multi_label_loss) {
       labels_dims[axis] = 1;
     }
     ctx->SetOutputDim("Loss", labels_dims);
@@ -147,9 +147,9 @@ class CSoftmaxWithMultiLabelCrossEntropyOpMaker
         "nranks",
         "(int default 1) nranks id for CSoftmaxWithMultiLabelCrossEntropy.")
         .SetDefault(0);
-    AddAttr<bool>(
-        "sum_loss",
-        "(bool default true) sum_loss for CSoftmaxWithMultiLabelCrossEntropy.")
+    AddAttr<bool>("sum_multi_label_loss",
+                  "(bool default true) sum_multi_label_loss for "
+                  "CSoftmaxWithMultiLabelCrossEntropy.")
         .SetDefault(true);
     AddComment(R"DOC(
 CSoftmaxWithMultiLabelCrossEntropy Operator
