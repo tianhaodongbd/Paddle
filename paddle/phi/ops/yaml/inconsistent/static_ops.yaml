@@ -1013,9 +1013,11 @@
   infer_meta:
     func : CSoftmaxWithMultiLabelCrossEntropyInferMeta
     spmd_rule : CSoftmaxWithMultiLabelCrossEntropyInferSpmd
+    param: [logits, label, smooth_weight, ignore_index, sum_multi_label_loss, rank, nranks]
   kernel:
     func: c_softmax_with_multi_label_cross_entropy
     data_type : logits
+    param: [logits, label, smooth_weight, ignore_index, sum_multi_label_loss, rank, nranks]
   backward: c_softmax_with_multi_label_cross_entropy_grad
 
 - op: faster_tokenizer

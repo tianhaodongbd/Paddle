@@ -379,7 +379,6 @@ void CSoftmaxWithMultiLabelCrossEntropyInferMeta(
     const MetaTensor& smooth_weight,
     int64_t ignore_index,
     bool sum_multi_label_loss,
-    int ring_id,
     int rank,
     int nranks,
     MetaTensor* softmax,

@@ -164,7 +164,6 @@ void CSoftmaxWithMultiLabelCrossEntropyGradInferMeta(
     const MetaTensor& loss_grad,
     int64_t ignore_index,
     bool sum_multi_label_loss,
-    int ring_id,
     int rank,
     int nranks,
     MetaTensor* logits_grad,

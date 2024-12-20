@@ -55,7 +55,6 @@ SpmdInfo CSoftmaxWithMultiLabelCrossEntropyInferSpmd(
     const DistMetaTensor& smooth_weight,
     int ignore_index,
     bool sum_multi_label_loss,
-    int ring_id,
     int rank,
     int nranks) {
   // Step0: Verify input args based on c_softmax_with_multi_label_cross_entropy
@@ -143,7 +142,6 @@ SpmdInfo CSoftmaxWithMultiLabelCrossEntropyGradSpmd(
     const DistMetaTensor& loss_grad,
     int ignore_index,
     bool sum_multi_label_loss,
-    int ring_id,
     int rank,
     int nranks) {
   EXTRACT_SHAPE_AND_DIST_ATTR_WITH_DIM_CK(softmax);

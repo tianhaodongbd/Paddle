@@ -125,9 +125,11 @@
   infer_meta :
     func: CSoftmaxWithMultiLabelCrossEntropyGradInferMeta
     spmd_rule : CSoftmaxWithMultiLabelCrossEntropyGradSpmd
+    param: [softmax, label, smooth_weight, loss_grad, ignore_index, sum_multi_label_loss, rank, nranks]
   kernel:
     func: c_softmax_with_multi_label_cross_entropy_grad
     data_type: loss_grad
+    param: [softmax, label, smooth_weight, loss_grad, ignore_index, sum_multi_label_loss, rank, nranks]
 
 - backward_op : divide_double_grad
   forward : divide_grad (Tensor x, Tensor y, Tensor out, Tensor grad_out, int axis = -1) -> Tensor(grad_x), Tensor(grad_y)
